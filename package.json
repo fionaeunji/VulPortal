@@ -1,0 +1,36 @@
+{
+  "name": "vulportal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "사내 IT 자산 취약점 관리 포털 (Next.js + Databricks SQL Warehouse)",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start -p ${DATABRICKS_APP_PORT:-3000}",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "db:check": "node --conditions=react-server --env-file-if-exists=.env.local --import tsx scripts/db-check.ts",
+    "audit": "npm audit --audit-level=high"
+  },
+  "dependencies": {
+    "@databricks/sql": "2.1.0",
+    "next": "16.3.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "server-only": "0.0.1",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.4",
+    "eslint-plugin-security": "4.0.1",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3"
+  }
+}
