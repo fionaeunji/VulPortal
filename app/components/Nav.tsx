@@ -13,7 +13,7 @@ export default function Nav({ user }: { user: CurrentUser | null }) {
           <Link href="/">대시보드</Link>
           <Link href="/assets">자산 관리</Link>
           <Link href="/vulnerabilities">취약점 관리</Link>
-          {user?.role === "ADMIN" ? <Link href="/admin/users">관리자 설정</Link> : null}
+          {user?.role === "ADMIN" ? <Link href="/admin">관리자 설정</Link> : null}
         </nav>
         <div className="user">
           {user ? (

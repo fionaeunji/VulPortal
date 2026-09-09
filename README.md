@@ -4,7 +4,7 @@
 자산과 매칭한 뒤 위험도·조치 기한을 계산해 대시보드로 보여주는 웹 포털입니다.
 
 > 이 문서는 개발 지식이 없는 담당자도 따라 할 수 있도록 작성했습니다.
-> 현재는 **3단계(자산 엑셀 업로드 + 자산 관리 화면)** 까지 반영되어 있습니다.
+> 현재는 **4단계(취약점 수집 노트북 + 수집 이력 + 수동 실행)** 까지 반영되어 있습니다.
 
 ## 기술 구성
 
@@ -46,6 +46,7 @@ npm ci
 | `DATABRICKS_WAREHOUSE_ID` | Databricks 좌측 메뉴 **SQL Warehouses** → 사용할 웨어하우스 → **Connection details** 탭 → `HTTP path` 의 마지막 부분 (`/sql/1.0/warehouses/` 뒤의 문자열) |
 | `DATABRICKS_TOKEN` | Databricks 우측 상단 프로필 → **Settings** → **Developer** → **Access tokens** → **Generate new token** |
 | `DATABRICKS_CATALOG` / `DATABRICKS_SCHEMA` | 테이블을 만들 카탈로그와 스키마 이름. 기본값 `main` / `vuln_portal` |
+| `SYNC_JOB_ID` | 취약점 수집 Job 의 ID. Databricks 좌측 메뉴 **Workflows** → `vulportal_sync_vuln` → 주소창 끝 숫자. 비우면 "지금 수동 실행" 버튼이 꺼집니다 |
 
 `.env.local` 은 `.gitignore` 에 포함되어 있어 저장소에 올라가지 않습니다. 개인 토큰은 절대 다른 곳에 복사하지 마세요.
 
@@ -129,6 +130,40 @@ npm run dev
 5. 목록에서 검색·필터·정렬이 가능하며, 관리자는 개별 수정·삭제를 할 수 있습니다.
 
 제한: 파일 10MB 이하, 20,000행 이하. 파일은 서버에 저장되지 않고 메모리에서 처리 후 버립니다.
+
+## 취약점 수집 (Databricks Job)
+
+취약점 정보는 앱이 아니라 Databricks Job(`jobs/sync_vuln.py`, Python 노트북)이 매일 06:00 KST 에 수집합니다.
+앱은 결과를 조회하고 상태를 바꾸는 일만 합니다.
+
+| 순서 | 수집원 | 내용 |
+| --- | --- | --- |
+| 1 | NVD CVE API 2.0 | CVSS 점수·벡터·영향 CPE. 최초 1회는 최근 2년 공개분, 이후에는 변경분만(`lastModStartDate`) |
+| 2 | EPSS | 전체 CSV 를 내려받아 점수 갱신. `epss_initial` 은 최초 1회만 저장하고 다시 바꾸지 않음 |
+| 3 | CISA KEV | 등재 여부·등재일 갱신. 테이블에 없는 KEV CVE 는 NVD 에서 추가로 받음 |
+| 4 | 자산 매칭 | 5단계에서 구현 |
+| 5 | 위험도 재계산 | 5단계에서 구현 |
+
+- 단계별 결과는 `sync_logs` 테이블에 기록되며 관리자 설정 › 취약점 수집 화면에서 볼 수 있습니다.
+- 한 단계가 실패해도 다음 단계는 계속 진행합니다.
+- 같은 시간에 두 번 실행되지 않도록 잠금을 겁니다. 실행 중 "지금 수동 실행"을 누르면 "이미 실행 중" 오류(409)가 납니다.
+
+### NVD API 키 등록 (권장)
+
+키가 없으면 30초에 5번만 요청할 수 있어 최초 수집이 오래 걸립니다. https://nvd.nist.gov/developers/request-an-api-key 에서 키를 받은 뒤,
+Databricks CLI 로 시크릿에 넣습니다. (CLI 설치는 9단계 운영 배포 절차 참고)
+
+```bash
+databricks secrets create-scope vuln-portal
+databricks secrets put-secret vuln-portal nvd-api-key --string-value "발급받은키"
+```
+
+### Job 배포와 수동 실행 버튼 연결
+
+1. `databricks.yml` 의 `host` 를 사내 워크스페이스 주소로 바꿉니다.
+2. `databricks bundle deploy -t prod` 로 Job 을 만듭니다. (자세한 절차는 9단계에서 README 에 추가)
+3. Databricks **Workflows** 에서 `vulportal_sync_vuln` 을 열고 주소창 끝의 숫자(Job ID)를 `.env.local` 의 `SYNC_JOB_ID` 에 넣습니다.
+4. 앱 서비스 프린시펄(운영) 또는 본인 계정(로컬)에 이 Job 의 **CAN_MANAGE_RUN** 권한이 있어야 버튼이 동작합니다.
 
 ## 자주 쓰는 명령
 

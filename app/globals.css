@@ -238,3 +238,16 @@ table.summary th {
 input[type="file"] {
   font-size: 14px;
 }
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+.link-card {
+  color: var(--text);
+  display: block;
+}
+.link-card:hover {
+  border-color: var(--primary);
+}

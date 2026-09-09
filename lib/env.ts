@@ -29,6 +29,8 @@ const envSchema = z.object({
   DATABRICKS_CLIENT_ID: z.string().min(1).optional(),
   DATABRICKS_CLIENT_SECRET: z.string().min(1).optional(),
   DEV_USER_EMAIL: z.email().optional(),
+  /** 취약점 수집 Job 의 ID (databricks bundle deploy 후 Databricks 화면에서 확인). 없으면 수동 실행 버튼 비활성 */
+  SYNC_JOB_ID: z.string().regex(/^[0-9]+$/, "SYNC_JOB_ID 는 숫자여야 합니다").optional(),
   INITIAL_ADMIN_EMAIL: z.email().optional(),
 });
 

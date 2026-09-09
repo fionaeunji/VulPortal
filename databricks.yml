@@ -1,0 +1,55 @@
+# Databricks Asset Bundle 정의
+# - 취약점 수집 Job(jobs/sync_vuln.py)을 매일 06:00 KST 에 서버리스 컴퓨트로 실행합니다.
+# - 배포: databricks bundle deploy -t prod   (README 의 운영 배포 절차 참고)
+bundle:
+  name: vulportal
+
+variables:
+  catalog:
+    description: 테이블이 있는 Unity Catalog 카탈로그
+    default: main
+  schema:
+    description: 테이블이 있는 스키마
+    default: vuln_portal
+
+resources:
+  jobs:
+    vulportal_sync_vuln:
+      name: vulportal_sync_vuln
+      description: "VulPortal 취약점 수집 (NVD → EPSS → KEV → 자산 매칭 → 위험도 재계산)"
+      max_concurrent_runs: 1
+      timeout_seconds: 14400
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"
+        timezone_id: Asia/Seoul
+        pause_status: UNPAUSED
+      # Job 파라미터: 노트북의 dbutils.widgets 로 전달됩니다.
+      # 앱의 "지금 수동 실행" 버튼은 triggered_by 에 실행한 사용자 이메일을 넣어 호출합니다.
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+        - name: schema
+          default: ${var.schema}
+        - name: run_id
+          default: "{{job.run_id}}"
+        - name: triggered_by
+          default: SCHEDULE
+      tasks:
+        - task_key: sync_vuln
+          # 클러스터를 지정하지 않으면 서버리스 컴퓨트로 실행됩니다.
+          notebook_task:
+            notebook_path: ./jobs/sync_vuln.py
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      # 사내 Databricks 워크스페이스 주소로 바꾸세요 (예: https://adb-1234567890123456.7.azuredatabricks.net)
+      host: https://<your-workspace-host>
+  prod:
+    mode: production
+    workspace:
+      host: https://<your-workspace-host>
+      # 운영 배포 위치. 개인 폴더가 아닌 공용 경로를 권장합니다.
+      root_path: /Workspace/Shared/vulportal
