@@ -69,3 +69,105 @@ table.data td {
   padding: 8px 10px;
   text-align: left;
 }
+
+/* 상단 메뉴 */
+.nav {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.nav-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.brand {
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--text);
+}
+.menu {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+}
+.menu a {
+  color: var(--text);
+}
+.user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.badge {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.badge-admin {
+  background: #dbeafe;
+  color: var(--primary);
+}
+.badge-viewer {
+  background: #f3f4f6;
+  color: var(--muted);
+}
+
+/* 폼 */
+.form-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: end;
+  margin-bottom: 16px;
+}
+.form-row label {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  color: var(--muted);
+  gap: 4px;
+}
+input[type="text"],
+input[type="email"],
+select {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  min-width: 180px;
+}
+button {
+  padding: 7px 14px;
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+button.secondary {
+  background: var(--surface);
+  color: var(--primary);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.alert-error {
+  background: #fee2e2;
+  color: var(--danger);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+.alert-ok {
+  background: #dcfce7;
+  color: var(--success);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+}

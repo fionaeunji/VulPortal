@@ -146,7 +146,7 @@ async function run(sql: string, params: SqlParams | undefined, session: IDBSQLSe
  * @param sql   named parameter(:이름)를 포함한 SQL. 테이블·컬럼명은 코드에 고정합니다.
  * @param params 바인딩할 값. 사용자 입력은 반드시 여기로만 전달합니다.
  */
-export async function query<T extends Row = Row>(sql: string, params?: SqlParams): Promise<T[]> {
+export async function query<T extends object = Row>(sql: string, params?: SqlParams): Promise<T[]> {
   try {
     const session = await getSession();
     return (await run(sql, params, session)) as T[];
@@ -166,7 +166,7 @@ export async function execute(sql: string, params?: SqlParams): Promise<void> {
 }
 
 /** 한 행만 필요할 때 사용합니다. 없으면 null. */
-export async function queryOne<T extends Row = Row>(sql: string, params?: SqlParams): Promise<T | null> {
+export async function queryOne<T extends object = Row>(sql: string, params?: SqlParams): Promise<T | null> {
   const rows = await query<T>(sql, params);
   return rows[0] ?? null;
 }

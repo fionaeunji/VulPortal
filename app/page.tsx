@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth";
 import { authMode, ping } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 
@@ -9,6 +10,12 @@ export default async function Home() {
   let dbOk = false;
   let target = "";
   let mode = "";
+  let user = null;
+  try {
+    user = await getCurrentUser();
+  } catch {
+    // 사용자 조회 실패는 아래 연결 상태에서 드러납니다.
+  }
   try {
     const env = getEnv();
     target = `${env.DATABRICKS_CATALOG}.${env.DATABRICKS_SCHEMA}`;
@@ -21,7 +28,7 @@ export default async function Home() {
   return (
     <main className="container">
       <h1>VulPortal</h1>
-      <p className="muted">사내 IT 자산 취약점 관리 포털 · 1단계 골격</p>
+      <p className="muted">사내 IT 자산 취약점 관리 포털 · 2단계 · 로그인/권한</p>
 
       <section className="card">
         <h2>연결 상태</h2>
@@ -44,6 +51,10 @@ export default async function Home() {
             <tr>
               <th>인증 방식</th>
               <td>{mode || "-"}</td>
+            </tr>
+            <tr>
+              <th>로그인 사용자</th>
+              <td>{user ? `${user.email} (${user.role === "ADMIN" ? "관리자" : "조회자"})` : "-"}</td>
             </tr>
             <tr>
               <th>확인 시각</th>
