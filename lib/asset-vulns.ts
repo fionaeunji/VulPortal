@@ -1,7 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { EXPOSURES } from "@/lib/asset-rules";
-import { query, queryOne, type SqlParams } from "@/lib/db";
+import { execute, query, queryOne, type SqlParams } from "@/lib/db";
 import { toDate } from "@/lib/format";
 import { SEVERITIES, STATUSES } from "@/lib/vuln-rules";
 
@@ -165,4 +165,46 @@ export async function listDepartments(): Promise<string[]> {
     "SELECT DISTINCT department FROM assets WHERE department IS NOT NULL ORDER BY department",
   );
   return rows.map((r) => r.department);
+}
+
+/** 상태 변경 입력 검증 규칙 */
+export const statusChangeSchema = z.object({
+  status: z.enum(STATUSES),
+  note: z
+    .string()
+    .trim()
+    .max(500, "비고는 500자 이하")
+    .transform((v) => (v.length === 0 ? null : v))
+    .nullable()
+    .optional(),
+});
+export type StatusChangeInput = z.infer<typeof statusChangeSchema>;
+
+/**
+ * 상태 변경. 완료(DONE)로 바꾸면 완료일을 기록하고, 다른 상태로 바꾸면 완료일을 지웁니다.
+ * 호출하는 API 가 권한(해당 없음은 관리자 전용)을 먼저 확인합니다.
+ */
+export async function updateAssetVulnStatus(id: string, input: StatusChangeInput, actorEmail: string): Promise<void> {
+  await execute(
+    `UPDATE asset_vulnerabilities SET
+       status = :status,
+       note = :note,
+       completed_at = CASE WHEN :status = 'DONE' THEN current_timestamp() ELSE NULL END,
+       updated_by = :actor,
+       updated_at = current_timestamp()
+     WHERE id = :id`,
+    { id, status: input.status, note: input.note ?? null, actor: actorEmail },
+  );
+}
+
+/** 필터 조건에 맞는 전체 목록 (엑셀 Export 용, 최대 50,000건) */
+export async function listAssetVulnsForExport(q: VulnListQuery): Promise<AssetVulnRecord[]> {
+  const { sql: whereSql, params } = buildWhere(q);
+  const sortColumn = SORTABLE.get(q.sort) ?? "av.due_date";
+  const direction = q.order === "desc" ? "DESC" : "ASC";
+  const rows = await query<AssetVulnRow>(
+    `${SELECT} ${whereSql} ORDER BY ${sortColumn} ${direction}, av.cve_id ASC LIMIT :limit`,
+    { ...params, limit: 50_000 },
+  );
+  return rows.map(toRecord);
 }

@@ -63,12 +63,19 @@ interface UserRow {
   is_active: boolean;
 }
 
-/** users 테이블에서 권한을 조회합니다. 없거나 비활성이면 VIEWER. */
+/** users 테이블에서 권한을 조회합니다. 없거나 비활성이면 VIEWER. DB 오류 시에도 안전하게 VIEWER 로 처리합니다. */
 async function lookupRole(email: string): Promise<{ role: Role; displayName: string | null; registered: boolean }> {
-  const row = await queryOne<UserRow>(
-    "SELECT email, display_name, role, is_active FROM users WHERE email = :email LIMIT 1",
-    { email },
-  );
+  let row: UserRow | null = null;
+  try {
+    row = await queryOne<UserRow>(
+      "SELECT email, display_name, role, is_active FROM users WHERE email = :email LIMIT 1",
+      { email },
+    );
+  } catch (err) {
+    // 권한 조회가 실패하면 더 낮은 권한(조회자)으로 취급합니다 (실패 시 안전 원칙)
+    logger.error("사용자 권한 조회 실패 — 조회자 권한으로 처리", err);
+    return { role: "VIEWER", displayName: null, registered: false };
+  }
   if (!row || !row.is_active) return { role: "VIEWER", displayName: row?.display_name ?? null, registered: !!row };
   const role: Role = row.role === "ADMIN" ? "ADMIN" : "VIEWER";
   return { role, displayName: row.display_name, registered: true };

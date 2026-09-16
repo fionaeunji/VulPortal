@@ -326,3 +326,24 @@ section.card {
   align-self: flex-start;
   margin-top: auto;
 }
+
+/* 취약점 관리 */
+.row-muted td {
+  color: var(--muted);
+}
+.note-cell {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+label.checkbox {
+  justify-content: flex-end;
+}
+label.checkbox span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  padding-bottom: 7px;
+}
