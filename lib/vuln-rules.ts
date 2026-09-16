@@ -26,7 +26,16 @@ export const DUE_RULE_TABLE: { severity: Severity; external: string; internal: s
 ];
 
 export function severityLabel(value: string): string {
-  return value === "EMERGENCY" || value === "PRIORITY" || value === "CAUTION" ? SEVERITY_LABEL[value] : value;
+  switch (value) {
+    case "EMERGENCY":
+      return SEVERITY_LABEL.EMERGENCY;
+    case "PRIORITY":
+      return SEVERITY_LABEL.PRIORITY;
+    case "CAUTION":
+      return SEVERITY_LABEL.CAUTION;
+    default:
+      return value;
+  }
 }
 
 export function statusLabel(value: string): string {
