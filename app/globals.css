@@ -251,3 +251,28 @@ input[type="file"] {
 .link-card:hover {
   border-color: var(--primary);
 }
+
+/* 위험도 표시 */
+.sev {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.sev-emergency {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.sev-priority {
+  background: #ffedd5;
+  color: #9a3412;
+}
+.sev-caution {
+  background: #fef9c3;
+  color: #854d0e;
+}
+.badge-warn {
+  background: #fef3c7;
+  color: #92400e;
+}

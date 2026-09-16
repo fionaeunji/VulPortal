@@ -469,16 +469,186 @@ def sync_kev():
 
 # COMMAND ----------
 
-# ── 자산 매칭 · 위험도 재계산 (5단계에서 구현) ──
+# ── 자산 매칭 · 위험도 · 조치 기한 ──
+#
+# 매칭 규칙
+#  * 자산에 CPE 가 입력된 경우(cpe_source=INPUT): 취약점 영향 CPE 와 제조사·제품을 정확히 비교 → CPE 매칭
+#  * CPE 가 없어 자동 생성된 경우(GENERATED): 제조사/제품명 문자열을 정규화(소문자, 기호 제거)해 비교 → FUZZY(정확도 낮음)
+#  * 버전: 취약점 CPE 의 버전 또는 버전 범위(vsi/vse/vei/vee)와 자산 버전을 비교.
+#    자산 버전이 비어 있으면 제품이 같기만 하면 매칭하고 FUZZY 로 표시합니다.
+#
+# 위험도 판정 (반드시 이 순서)
+#  1. KEV 등재                          → EMERGENCY(긴급)
+#  2. CVSS >= 9.0 AND EPSS초기 >= 0.3   → EMERGENCY
+#  3. CVSS >= 9.0 AND EPSS초기 >= 0.1   → PRIORITY(우선)
+#  4. CVSS >= 7.0                       → CAUTION(주의)
+#  5. 그 외                              → 저장하지 않음
+#
+# 조치 기한 (탐지일 기준)          경계면(EXTERNAL)   내부(INTERNAL)
+#  EMERGENCY                        72시간             6주
+#  PRIORITY                         2주                6주
+#  CAUTION                          1개월              3개월
+
+SEVERITY_SQL = """
+    CASE
+      WHEN v.is_kev = true THEN 'EMERGENCY'
+      WHEN v.cvss_score >= 9.0 AND v.epss_initial >= 0.3 THEN 'EMERGENCY'
+      WHEN v.cvss_score >= 9.0 AND v.epss_initial >= 0.1 THEN 'PRIORITY'
+      WHEN v.cvss_score >= 7.0 THEN 'CAUTION'
+      ELSE NULL
+    END"""
+
+DUE_DATE_SQL = """
+    CASE
+      WHEN {sev} = 'EMERGENCY' AND a.exposure = 'EXTERNAL' THEN {detected} + INTERVAL 72 HOURS
+      WHEN {sev} = 'EMERGENCY' THEN {detected} + INTERVAL 6 WEEKS
+      WHEN {sev} = 'PRIORITY' AND a.exposure = 'EXTERNAL' THEN {detected} + INTERVAL 2 WEEKS
+      WHEN {sev} = 'PRIORITY' THEN {detected} + INTERVAL 6 WEEKS
+      WHEN {sev} = 'CAUTION' AND a.exposure = 'EXTERNAL' THEN {detected} + INTERVAL 1 MONTH
+      ELSE {detected} + INTERVAL 3 MONTHS
+    END"""
+
+AFFECTED_CPE_STRUCT = "ARRAY<STRUCT<cpe:STRING, vsi:STRING, vse:STRING, vei:STRING, vee:STRING>>"
+
+
+def version_key(text):
+    """버전 문자열('10.2.9', '7.2.5-build3')을 비교 가능한 숫자 목록으로 바꿉니다."""
+    parts = re.split(r"[.\-_+ ]", (text or "").strip().lower())
+    key = []
+    for p in parts:
+        m = re.match(r"^(\d+)(.*)$", p)
+        if m:
+            key.append((int(m.group(1)), m.group(2)))
+        else:
+            key.append((-1, p))
+    return key
+
+
+def version_matches(asset_version, cpe_version, vsi, vse, vei, vee):
+    """자산 버전이 취약점 CPE 버전/범위에 해당하면 'CPE', 자산 버전이 없어 판단 불가면 'FUZZY', 아니면 None."""
+    av = (asset_version or "").strip().lower()
+    cv = (cpe_version or "").strip().lower()
+    if not av:
+        return "FUZZY"  # 자산 버전이 없으면 제품 일치만으로 매칭하고 정확도 낮음으로 표시
+    if cv not in ("*", "-", ""):
+        return "CPE" if version_key(av) == version_key(cv) else None
+    key = version_key(av)
+    if vsi and key < version_key(vsi):
+        return None
+    if vse and key <= version_key(vse):
+        return None
+    if vei and key > version_key(vei):
+        return None
+    if vee and key >= version_key(vee):
+        return None
+    return "CPE"
+
+
+spark.udf.register("vp_version_matches", version_matches, StringType())
+
+
+def build_candidate_view():
+    """자산과 취약점 영향 CPE 를 제조사·제품 기준으로 이어 붙여 후보 목록(임시 뷰 match_candidates)을 만듭니다."""
+    spark.sql(
+        f"""CREATE OR REPLACE TEMP VIEW vuln_cpes AS
+            SELECT v.cve_id, c.cpe,
+                   lower(regexp_replace(split(c.cpe, '(?<!\\\\):')[3], '[^a-z0-9]', '')) AS n_vendor,
+                   lower(regexp_replace(split(c.cpe, '(?<!\\\\):')[4], '[^a-z0-9]', '')) AS n_product,
+                   split(c.cpe, '(?<!\\\\):')[5] AS cpe_version,
+                   c.vsi, c.vse, c.vei, c.vee
+            FROM (SELECT cve_id, is_kev, cvss_score, affected_cpes FROM vulnerabilities
+                  WHERE affected_cpes IS NOT NULL AND (is_kev = true OR cvss_score >= 7.0)) v
+            LATERAL VIEW explode(from_json(v.affected_cpes, '{AFFECTED_CPE_STRUCT}')) t AS c
+            WHERE c.cpe IS NOT NULL"""
+    )
+    spark.sql(
+        """CREATE OR REPLACE TEMP VIEW asset_keys AS
+           SELECT id AS asset_id, version, exposure, cpe_source,
+                  lower(regexp_replace(coalesce(split(cpe, '(?<!\\\\):')[3], vendor, ''), '[^a-z0-9]', '')) AS n_vendor,
+                  lower(regexp_replace(coalesce(split(cpe, '(?<!\\\\):')[4], product_name, ''), '[^a-z0-9]', '')) AS n_product
+           FROM assets"""
+    )
+    # 제품이 같고, 제조사는 (입력 CPE) 정확히 같거나 (자동 생성) 한쪽이 다른 쪽을 포함하면 후보
+    spark.sql(
+        """CREATE OR REPLACE TEMP VIEW match_candidates AS
+           SELECT a.asset_id, c.cve_id,
+                  CASE WHEN a.cpe_source = 'INPUT' THEN 'CPE' ELSE 'FUZZY' END AS base_method,
+                  vp_version_matches(a.version, c.cpe_version, c.vsi, c.vse, c.vei, c.vee) AS version_method
+           FROM asset_keys a
+           JOIN vuln_cpes c
+             ON a.n_product = c.n_product AND length(a.n_product) > 0
+            AND (a.n_vendor = c.n_vendor
+                 OR (a.cpe_source <> 'INPUT' AND length(a.n_vendor) > 0
+                     AND (c.n_vendor LIKE concat('%', a.n_vendor, '%') OR a.n_vendor LIKE concat('%', c.n_vendor, '%'))))"""
+    )
+
 
 def match_assets():
-    """자산 CPE 와 취약점 영향 CPE 를 비교해 asset_vulnerabilities 를 만듭니다. (5단계에서 구현 예정)"""
-    return None  # None 을 돌려주면 SKIPPED 로 기록됩니다
+    """자산 CPE 와 취약점 영향 CPE 를 비교해 asset_vulnerabilities 에 새 매칭을 추가하고, 미조치 건의 위험도·기한을 갱신합니다."""
+    build_candidate_view()
+    sev = SEVERITY_SQL
+    due_new = DUE_DATE_SQL.format(sev="m.severity", detected="current_timestamp()")
+    due_existing = DUE_DATE_SQL.format(sev="m.severity", detected="t.detected_at")
+    spark.sql(
+        f"""CREATE OR REPLACE TEMP VIEW matched AS
+            SELECT DISTINCT mc.asset_id, mc.cve_id, a.exposure,
+                   CASE WHEN mc.base_method = 'CPE' AND mc.version_method = 'CPE' THEN 'CPE' ELSE 'FUZZY' END AS match_method,
+                   {sev} AS severity
+            FROM match_candidates mc
+            JOIN assets a ON a.id = mc.asset_id
+            JOIN vulnerabilities v ON v.cve_id = mc.cve_id
+            WHERE mc.version_method IS NOT NULL"""
+    )
+    # 같은 자산·CVE 가 여러 CPE 로 겹치면 정확한(CPE) 매칭을 우선
+    spark.sql(
+        """CREATE OR REPLACE TEMP VIEW matched_best AS
+           SELECT asset_id, cve_id, exposure, severity,
+                  min(CASE WHEN match_method = 'CPE' THEN 'CPE' ELSE 'FUZZY' END) AS match_method
+           FROM matched WHERE severity IS NOT NULL
+           GROUP BY asset_id, cve_id, exposure, severity"""
+    )
+    result = spark.sql(
+        f"""MERGE INTO asset_vulnerabilities AS t
+            USING (SELECT m.*, a.exposure AS a_exposure FROM matched_best m JOIN assets a ON a.id = m.asset_id) AS m
+            ON t.asset_id = m.asset_id AND t.cve_id = m.cve_id
+            WHEN MATCHED AND t.status IN ('OPEN', 'IN_PROGRESS') THEN UPDATE SET
+              severity = m.severity, match_method = m.match_method,
+              due_date = {due_existing.replace("a.exposure", "m.a_exposure")},
+              updated_at = current_timestamp()
+            WHEN NOT MATCHED THEN INSERT
+              (id, asset_id, cve_id, severity, match_method, detected_at, due_date, status, completed_at, note, updated_by, created_at, updated_at)
+              VALUES (uuid(), m.asset_id, m.cve_id, m.severity, m.match_method, current_timestamp(),
+                      {due_new.replace("a.exposure", "m.a_exposure")},
+                      'OPEN', NULL, NULL, 'SYSTEM', current_timestamp(), current_timestamp())"""
+    ).collect()
+    metrics = result[0].asDict() if result else {}
+    inserted = int(metrics.get("num_inserted_rows", 0) or 0)
+    updated = int(metrics.get("num_updated_rows", 0) or 0)
+    print(f"  새 매칭 {inserted}건, 갱신 {updated}건")
+    return inserted + updated
 
 
 def recalculate_severity():
-    """위험도(긴급/우선/주의)와 조치 기한을 다시 계산합니다. (5단계에서 구현 예정)"""
-    return None
+    """미조치(OPEN/IN_PROGRESS) 건의 위험도와 기한을 최신 CVSS/EPSS/KEV 로 다시 계산합니다. 완료·위험수용·해당없음 건은 바꾸지 않습니다."""
+    sev = SEVERITY_SQL
+    due = DUE_DATE_SQL.format(sev="s.new_severity", detected="t.detected_at").replace("a.exposure", "s.exposure")
+    result = spark.sql(
+        f"""MERGE INTO asset_vulnerabilities AS t
+            USING (SELECT av.id, a.exposure, {sev} AS new_severity
+                   FROM asset_vulnerabilities av
+                   JOIN assets a ON a.id = av.asset_id
+                   JOIN vulnerabilities v ON v.cve_id = av.cve_id
+                   WHERE av.status IN ('OPEN', 'IN_PROGRESS')) AS s
+            ON t.id = s.id
+            WHEN MATCHED AND s.new_severity IS NULL AND t.status = 'OPEN' THEN DELETE
+            WHEN MATCHED AND s.new_severity IS NOT NULL AND s.new_severity <> t.severity THEN UPDATE SET
+              severity = s.new_severity, due_date = {due}, updated_at = current_timestamp()"""
+    ).collect()
+    metrics = result[0].asDict() if result else {}
+    updated = int(metrics.get("num_updated_rows", 0) or 0)
+    deleted = int(metrics.get("num_deleted_rows", 0) or 0)
+    print(f"  위험도 변경 {updated}건, 기준 미달로 제외(미착수 건만) {deleted}건")
+    return updated + deleted
 
 # COMMAND ----------
 
